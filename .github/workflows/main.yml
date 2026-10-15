@@ -6,7 +6,7 @@ on:
 jobs:
   linux-rdp:
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # maksimum dla runnerów GitHuba (6h)
+    timeout-minutes: 1000   # maksimum dla runnerów GitHuba (6h)
 
     steps:
       - name: Install desktop (XFCE) and xrdp
