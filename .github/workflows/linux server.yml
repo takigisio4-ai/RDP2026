@@ -1,0 +1,77 @@
+name: RDP-Linux
+
+on:
+  workflow_dispatch:
+
+jobs:
+  linux-rdp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # maksimum dla runnerów GitHuba (6h)
+
+    steps:
+      - name: Install desktop (XFCE) and xrdp
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y xfce4 xfce4-goodies xrdp dbus-x11
+          sudo adduser xrdp ssl-cert || true
+          sudo systemctl enable xrdp
+          sudo systemctl restart xrdp
+
+      - name: Create RDP user with random password
+        run: |
+          PASSWORD=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | cut -c1-16)
+          sudo useradd -m -s /bin/bash RDP
+          echo "RDP:$PASSWORD" | sudo chpasswd
+          sudo usermod -aG sudo RDP
+          echo "xfce4-session" | sudo tee /home/RDP/.xsession > /dev/null
+          sudo chown RDP:RDP /home/RDP/.xsession
+          echo "RDP_PASS=$PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Establish Tailscale connection
+        env:
+          TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="gh-runner-linux-$GITHUB_RUN_ID"
+
+          TS_IP=""
+          for i in $(seq 1 10); do
+            TS_IP=$(tailscale ip -4 2>/dev/null | head -n1)
+            [ -n "$TS_IP" ] && break
+            sleep 5
+          done
+
+          if [ -z "$TS_IP" ]; then
+            echo "Tailscale IP not assigned. Exiting."
+            exit 1
+          fi
+          echo "TAILSCALE_IP=$TS_IP" >> "$GITHUB_ENV"
+
+      - name: Verify RDP accessibility
+        run: |
+          echo "Tailscale IP: $TAILSCALE_IP"
+          if nc -z "$TAILSCALE_IP" 3389; then
+            echo "TCP connectivity successful!"
+          else
+            echo "xrdp is not listening on 3389"
+            sudo systemctl status xrdp --no-pager || true
+            exit 1
+          fi
+
+      - name: Maintain connection
+        run: |
+          echo ""
+          echo "=== RDP ACCESS ==="
+          echo "Address:  $TAILSCALE_IP"
+          echo "Username: RDP"
+          echo "Password: $RDP_PASS"
+          echo "=================="
+          echo ""
+
+          while true; do
+            echo "[$(date)] RDP Active - cancel the workflow to terminate"
+            sleep 300
+          done
